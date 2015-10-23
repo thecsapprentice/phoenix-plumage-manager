@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block title %} Job Submission {% end %}
+
+{% block body %}
+
+{% if new_job == False %}
+
+<form role="form" action="/submit_job" id="jobsubmit_form" method="post">
+    
+    <div class="form-group {% if missing.get('submitter',False) %}has-error{% end %}">
+        <label for="submitter">Submitter Name:</label>
+        <input type="text" class="form-control" id="submitter" name="submitter" value="{{ values.get('submitter','') }}">
+        {% if missing.get('submitter',False) %}<span class="help-block">Please correct the error</span>{% end %}
+    </div>
+
+    <div class="form-group {% if missing.get('email',False) %}has-error{% end %}">
+        <label for="email">Email:</label>
+        <input type="email" class="form-control" id="email" name="email" value="{{ values.get('email','') }}">
+        {% if missing.get('email',False) %}<span class="help-block">Please correct the error</span>{% end %}
+    </div>
+
+    <div class="form-group {% if missing.get('name',False) %}has-error{% end %}">
+        <label for="name">Job Name:</label>
+        <input type="text" class="form-control" id="name" name="name" value="{{ values.get('name','') }}">
+        {% if missing.get('name',False) %}<span class="help-block">Please correct the error</span>{% end %}
+    </div>
+     
+    <div class="form-group {% if missing.get('scene',False) %}has-error{% end %}">
+        <label for="scene">Scene:</label>
+        <input type="text" class="form-control" id="scene" name="scene" value="{{ values.get('scene','') }}">
+        {% if missing.get('scene',False) %}<span class="help-block">Please correct the error</span>{% end %}
+    </div>
+
+    <div class="form-group {% if missing.get('frame-start',False) %}has-error{% end %}">
+        <label for="frame-start">Frame Start:</label>
+        <input type="number" class="form-control" id="frame-start" name="frame-start" min="0" value="{{ values.get('frame-start',0) }}">
+        {% if missing.get('frame-start',False) %}<span class="help-block">Please correct the error</span>{% end %}
+    </div>
+
+    <div class="form-group {% if missing.get('frame-end',False) %}has-error{% end %}">
+        <label for="frame-end">Frame End (Inclusive):</label>
+        <input type="number" class="form-control" id="frame-end" name="frame-end" min="0" value="{{ values.get('frame-end',0) }}">
+        {% if missing.get('frame-end',False) %}<span class="help-block">Please correct the error</span>{% end %}
+    </div>
+
+  <button type="submit" class="btn btn-default"> Submit</button>
+</form>
+
+{% elif job_submit_success == True %}
+
+<div class="alert alert-success">
+  <strong>Success!</strong> Your job was submitted successfully to Plumage. Rendering will begin as soon as resources are availble. You may view the status of your job from the main page.
+</div>
+
+{% else %}
+
+<div class="alert alert-danger">
+  <strong>Failure!</strong> Job could not be submitted successfully. See error message below.
+</div>
+
+<div class="well well-lg">
+    {{ job_submit_error }}
+</div>
+
+{% end %}
+
+{% end %}
