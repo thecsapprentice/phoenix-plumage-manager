@@ -46,7 +46,7 @@
     <div class="panel-body">
         <div class="row">
             {% if job_data.job_status == 1 %}
-            <div class="col-md-1">
+            <div class="col-sm-1 col-md-2">
                 <a href="/cancel_job?uuid={{ job_data.uuid }}" >
                     <button type="button" id="delete_job" class="btn btn-danger" aria-label="Left Align">
                         <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
@@ -56,7 +56,7 @@
             </div>
             {% end %}
             {% if job_data.job_status == 1 %}
-            <div class="col-md-1">
+            <div class="col-sm-1 col-md-2">
                 <button type="button" id="manual_submit" class="btn btn-info" aria-label="Left Align" data-toggle="modal" data-target="#manual-submit-form">
                     <span class="glyphicon glyphicon-cloud-upload" aria-hidden="true"></span>
                     <span>Manual Upload</span>
@@ -64,8 +64,7 @@
             </div>
             {% end %}
             {% if job_data.job_status == 2 %}
-            <div class="col-md-1">
-                
+            <div class="col-sm-1 col-md-2">
                 <a href="/download_zip?uuid={{ job_data.uuid }}" >
                     <button type="button" id="download_zip" class="btn btn-info" aria-label="Left Align">
                         <span class="glyphicon glyphicon-save" aria-hidden="true"></span>
