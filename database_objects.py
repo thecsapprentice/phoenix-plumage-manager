@@ -1,11 +1,31 @@
 import os
 import sys
-from sqlalchemy import Column, ForeignKey, Integer, String, DateTime
+from sqlalchemy import Column, ForeignKey, Integer, String, DateTime, Text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, backref
 from sqlalchemy import create_engine
 
 Base = declarative_base()
+
+class ManagerSettings(Base):
+    __tablename__ = 'managersettings'
+    id = Column(Integer, primary_key=True)
+    broker = Column(Text)
+    broker_manager_user = Column(String(128))
+    broker_manager_pass = Column(String(128))
+    sceneData_path = Column(Text)
+    managerData_path = Column(Text)
+    timeout = Column(Integer)
+    retries = Column(Integer)
+    broker_user = Column(String(128))
+    broker_pass = Column(String(128))    
+    
+class Settings(Base):
+    __tablename__ = 'settings'
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey('renderjob.id'), nullable=False)
+    timeout = Column(Integer)
+    retries = Column(Integer)
 
 class RenderJob(Base):
     __tablename__ = 'renderjob'
@@ -15,19 +35,15 @@ class RenderJob(Base):
     submitter = Column(String(250), nullable=False)
     email = Column(String(250), nullable=False)
     scene = Column(String(250), nullable=False)
+    start = Column(DateTime)
+    end = Column(DateTime)
     frame_start = Column(Integer)
     frame_end = Column(Integer)
     frames = relationship("Frame", order_by="Frame.id", backref="job")
     job_status = Column(Integer)
     try_hard = Column(Integer, default=0)
     eta = Column(DateTime)
-    settings = relationship("Settings",
-                            uselist=False,
-                            backref="job"
-                            primaryjoin="renderjob.id==settings.job_id",
-                            foreign_keys=[Settings.__table__.c.settings],
-                            passive_deletes='all' );
-    )
+    settings = relationship("Settings", uselist=False, backref="job")    
     
 
 class Frame(Base):
@@ -39,20 +55,8 @@ class Frame(Base):
     uuid = Column(String(34))
     start = Column(DateTime)
     end = Column(DateTime)
-    node = Column(String(256))
-    metadata = Column(Text)
-
-class Settings(Base):
-    __tablename__ = 'settings'
-    id = Column(Integer, primary_key=True)
-    job_id = Column(Integer, ForeignKey('renderjob.id'), nullable=False)
-    timeout = Column(Integer)
-    retries = Column(Integer)
-    broker = Column(Text))
-    broker_user = Column(String(128))
-    broker_pass = Column(String(128))
-    sceneData_path = Column(Text)
-    
+    node = Column(String(256),default="")
+    frame_metadata = Column(Text,default="{}")    
     
 metadata = Base.metadata
     

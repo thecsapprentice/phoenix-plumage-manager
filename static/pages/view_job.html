@@ -117,6 +117,7 @@
                 <th data-field="frame-complete" data-sortable="true">Complete</th>
                 <th data-field="frame-status" data-sortable="true">Status</th>
                 <th data-field="frame-time" data-sortable="true">Time</th>
+		<th data-field="frame-node" data-sortable="true">Node</th>
                 <th data-field="frame-actions">Actions</th>
             </tr>
         </thead>
@@ -142,6 +143,9 @@
                 </td>
                 <td class="frame-tbl-time">
                     {{ frame.time }}
+                </td>
+		<td>
+		  {{ frame.node }}
                 </td>
                 <td class="frame-tbl-actions">
                     {% if frame.status == 4%}
