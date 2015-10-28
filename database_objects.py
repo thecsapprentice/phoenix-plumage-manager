@@ -21,6 +21,13 @@ class RenderJob(Base):
     job_status = Column(Integer)
     try_hard = Column(Integer, default=0)
     eta = Column(DateTime)
+    settings = relationship("Settings",
+                            uselist=False,
+                            backref="job"
+                            primaryjoin="renderjob.id==settings.job_id",
+                            foreign_keys=[Settings.__table__.c.settings],
+                            passive_deletes='all' );
+    )
     
 
 class Frame(Base):
@@ -32,6 +39,20 @@ class Frame(Base):
     uuid = Column(String(34))
     start = Column(DateTime)
     end = Column(DateTime)
+    node = Column(String(256))
+    metadata = Column(Text)
+
+class Settings(Base):
+    __tablename__ = 'settings'
+    id = Column(Integer, primary_key=True)
+    job_id = Column(Integer, ForeignKey('renderjob.id'), nullable=False)
+    timeout = Column(Integer)
+    retries = Column(Integer)
+    broker = Column(Text))
+    broker_user = Column(String(128))
+    broker_pass = Column(String(128))
+    sceneData_path = Column(Text)
+    
     
 metadata = Base.metadata
     
