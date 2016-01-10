@@ -65,7 +65,7 @@
             {% end %}
             {% if job_data.job_status == 1 %}
             <div class="col-sm-1 col-md-2">
-                <a href="/toggle_auto_requeue?job_uuid={{ job_data.uuid }}" >
+                <a href="/toggle_auto_requeue?uuid={{ job_data.uuid }}" >
                     <button type="button" id="toggle_auto_requeue" class="btn {% if job_data.try_hard == 1 %}btn-info{% else %}btn-default{% end %}" aria-label="Left Align">
                         <span class="glyphicon glyphicon-retweet" aria-hidden="true"></span>
                         <span>{% if job_data.try_hard == 1 %}Disable Auto-Requeue{% else %}Enable Auto-Requeue{% end %}</span>
@@ -127,6 +127,7 @@
                 <th data-field="frame-complete" data-sortable="true">Complete</th>
                 <th data-field="frame-status" data-sortable="true">Status</th>
                 <th data-field="frame-time" data-sortable="true">Time</th>
+		<th data-field="frame-node" data-sortable="true">Node</th>
                 <th data-field="frame-actions">Actions</th>
             </tr>
         </thead>
@@ -152,6 +153,9 @@
                 </td>
                 <td class="frame-tbl-time">
                     {{ frame.time }}
+                </td>
+		<td>
+		  {{ frame.node }}
                 </td>
                 <td class="frame-tbl-actions">
                     {% if frame.status == 4%}

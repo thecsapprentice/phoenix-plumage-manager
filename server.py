@@ -48,6 +48,7 @@ class Application(tornado.web.Application):
             (r'/manual_upload', ManualStore),
             (r'/manual_requeue', ManualRequeue),
             (r'/toggle_auto_requeue', ToggleAutoRequeue),
+            (r'/frame_settings', FrameSettings),
         ]        
         settings = dict(
             static_path=os.path.join(os.path.dirname(__file__), "static"),
@@ -74,6 +75,53 @@ class BaseHandler(tornado.web.RequestHandler):
     def scene_path(self):
         return self.application.scene_path
 
+    def getFrameOrError(self):
+        frame_uuid = self.get_query_argument('uuid',default=None)
+        frame_id = self.get_query_argument('id',default=None)
+        if frame_uuid == None and frame_id == None:
+            self.send_error(500)
+            return None
+        elif frame_uuid != None:
+            try:            
+                frame = self.db.query(Frame).filter_by(uuid=frame_uuid).one()
+            except NoResultFound:
+                self.send_error(500);
+                return None
+            else:
+                return frame
+        else:
+            try:
+                frame = self.db.query(Frame).filter_by(id=frame_id).one()
+            except NoResultFound:
+                self.send_error(500);
+                return None
+            else:
+                return frame
+
+    def getJobOrError(self):
+        job_uuid = self.get_query_argument('uuid',default=None)
+        job_id = self.get_query_argument('id',default=None)
+        if job_uuid == None and job_id == None:
+            self.send_error(500)
+            return None
+        elif job_uuid != None:
+            try:            
+                job = self.db.query(RenderJob).filter_by(uuid=job_uuid).one()
+            except NoResultFound:
+                self.send_error(500);
+                return None
+            else:
+                return job
+        else:
+            try:
+                job = self.db.query(RenderJob).filter_by(id=job_id).one()
+            except NoResultFound:
+                self.send_error(500);
+                return None
+            else:
+                return job
+
+            
 class IndexHandler( BaseHandler ):
     @tornado.web.asynchronous
     def get(self):
@@ -120,27 +168,22 @@ class JobCancelHandler( BaseHandler ):
 class DownloadZipHandler( BaseHandler ):
     @tornado.web.asynchronous
     def get(self):
-        job_uuid = self.get_query_argument('uuid',default=None)
-        if job_uuid == None:
-            self.send_error(500)
-            return
-        try:
-            job = self.db.query(RenderJob).filter_by(uuid=job_uuid).one()
-        except NoResultFound:
-            self.send_error(500);
-            return
-        else:           
-            save_dir = os.path.join(self.data_path,"completed_renders",job.name+"_"+job.uuid )
-            f=io.BytesIO()
-            zf = ZipFile(f, "w", allowZip64=True)
-            for frame in range(job.frame_start, job.frame_end+1):
-                zf.write(os.path.join(save_dir,str(frame)),arcname="render_{:08d}.png".format(frame))
-            zf.close()
-            self.set_header('Content-Type', 'application/zip')
-            self.set_header("Content-Disposition", "attachment; filename=%s.zip" % (job.name+"_"+job.uuid) )
-            self.write(f.getvalue())
-            f.close()
+        job = self.getJobOrError()
+        if job==None:
             self.finish()
+            return
+        
+        save_dir = os.path.join(self.data_path,"completed_renders",job.name+"_"+job.uuid )
+        f=io.BytesIO()
+        zf = ZipFile(f, "w", allowZip64=True)
+        for frame in range(job.frame_start, job.frame_end+1):
+            zf.write(os.path.join(save_dir,str(frame)),arcname="render_{:08d}.png".format(frame))
+        zf.close()
+        self.set_header('Content-Type', 'application/zip')
+        self.set_header("Content-Disposition", "attachment; filename=%s.zip" % (job.name+"_"+job.uuid) )
+        self.write(f.getvalue())
+        f.close()
+        self.finish()
         
 class JobSubmissionHandler( BaseHandler ):
     @tornado.web.asynchronous
@@ -210,30 +253,41 @@ class JobSubmissionHandler( BaseHandler ):
 class StoreHandler( BaseHandler ):
     @tornado.web.asynchronous
     def post(self):
-        render_uuid = self.get_query_argument('uuid',default=None)
-        if render_uuid == None:
-            self.send_error(500)
-            return
-        try:
-            self.db.query(Frame).filter_by(uuid=render_uuid).one()
-        except NoResultFound:
-            self.send_error(500);
-            return
-        else:           
-            render = self.request.files['render'][0]
-            original_fname = render['filename']
-            extension = os.path.splitext(original_fname)[1]
-            fname = render_uuid
-            final_filename= fname
-            try:
-                os.mkdir(os.path.join(self.data_path,"frame_cache"))
-            except:
-                pass
-            output_file = open(os.path.join(self.data_path,"frame_cache",final_filename), 'w')
-            output_file.write(render['body'])
-            output_file.close()
+        frame = self.getFrameOrError()
+        if frame==None:
             self.finish()
+            return
+        
+        render = self.request.files['render'][0]
+        original_fname = render['filename']
+        extension = os.path.splitext(original_fname)[1]
+        fname = render_uuid
+        final_filename= fname
+        try:
+            os.mkdir(os.path.join(self.data_path,"frame_cache"))
+        except:
+            pass
+        output_file = open(os.path.join(self.data_path,"frame_cache",final_filename), 'w')
+        output_file.write(render['body'])
+        output_file.close()
+        self.finish()
 
+class FrameSettings( BaseHandler ):
+    @tornado.web.asynchronous
+    def get(self):
+        frame = self.getFrameOrError()
+        if frame==None:
+            self.finish()
+            return
+
+        renderjob = frame.job
+        settings = renderjob.settings
+        settings_data = { 'retries':settings.retries,
+                          'timeout':settings.timeout }
+        self.write( json.dumps( settings_data ) );            
+        self.finish()
+                              
+            
 class ManualStore( BaseHandler ):
     @tornado.web.asynchronous
     def post(self):
@@ -273,31 +327,24 @@ class ManualStore( BaseHandler ):
 class ToggleAutoRequeue( BaseHandler ):
     @tornado.web.asynchronous
     def get(self):
-        job_uuid = self.get_query_argument('job_uuid',default=None)
-        if job_uuid == None:
-            print job_uuid
-            LOGGER.error( "Bad input data" );
-            self.send_error(500)
+        job = self.getJobOrError()
+        if job==None:
+            self.finish()
             return
-        try:
-            job_record = self.db.query(RenderJob).filter(RenderJob.uuid==job_uuid).one();
-        except NoResultFound:
-            LOGGER.error( "No job found for " + str(job_uuid) );
-            self.send_error(500);
-            return
-        else:           
-            if job_record.try_hard == 1:
-                job_record.try_hard = 0
-            else:
-                job_record.try_hard = 1;
-            self.db.commit()   
+
+        if job.try_hard == 1:
+            job.try_hard = 0
+        else:
+            job.try_hard = 1;
+
+        self.db.commit()   
 
         self.finish();
     
 
 class ManualRequeue( BaseHandler ):
     @tornado.web.asynchronous
-    def get(self):
+    def get(self):        
         render_uuid = self.get_query_argument('uuid',default=None)
         if render_uuid == None:
             self.send_error(500)
@@ -363,7 +410,7 @@ def main():
     }
     logging.basicConfig(level=logging.INFO)
 
-    engine = create_engine('sqlite://'+os.path.join(args.data_path,'local.db'))
+    engine = create_engine('sqlite:///'+os.path.abspath(os.path.join(args.data_path,'local.db')))
     create_all(engine)
     app = Application(engine=engine,data_path=args.data_path, scene_path=args.scene_path)
     io_loop = tornado.ioloop.IOLoop.instance()
