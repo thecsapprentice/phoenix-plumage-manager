@@ -63,6 +63,16 @@
                 </button>
             </div>
             {% end %}
+            {% if job_data.job_status == 1 %}
+            <div class="col-sm-1 col-md-2">
+                <a href="/toggle_auto_requeue?job_uuid={{ job_data.uuid }}" >
+                    <button type="button" id="toggle_auto_requeue" class="btn {% if job_data.try_hard == 1 %}btn-info{% else %}btn-default{% end %}" aria-label="Left Align">
+                        <span class="glyphicon glyphicon-retweet" aria-hidden="true"></span>
+                        <span>{% if job_data.try_hard == 1 %}Disable Auto-Requeue{% else %}Enable Auto-Requeue{% end %}</span>
+                    </button>
+                </a>
+            </div>
+            {% end %}
             {% if job_data.job_status == 2 %}
             <div class="col-sm-1 col-md-2">
                 <a href="/download_zip?uuid={{ job_data.uuid }}" >

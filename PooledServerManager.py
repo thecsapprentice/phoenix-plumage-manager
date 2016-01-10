@@ -227,7 +227,16 @@ class PooledServerManager(object):
                 job.eta = datetime.now()
             if self._db.query(RenderJob).join(Frame).filter(RenderJob.id==job.id).filter(Frame.status==4).count() == (job.frame_end - job.frame_start + 1) :
                 LOGGER.info("RenderJob " + job.uuid + " has been completed.")
-                job.job_status = 2                                                
+                job.job_status = 2  
+
+            # If try hard is enabled, check and requeue any failed frames
+            if job.try_hard == 1:
+                failed_frames = self._db.query(Frame).join(RenderJob).filter(RenderJob.id==job.id).filter(Frame.status==5).all()
+                for failed_frame in failed_frames:
+                    requeue( failed_frame )
+                
+                
+                                              
         self._db.commit()           
                               
             

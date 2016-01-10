@@ -47,6 +47,7 @@ class Application(tornado.web.Application):
             (r'/download_zip', DownloadZipHandler),
             (r'/manual_upload', ManualStore),
             (r'/manual_requeue', ManualRequeue),
+            (r'/toggle_auto_requeue', ToggleAutoRequeue),
         ]        
         settings = dict(
             static_path=os.path.join(os.path.dirname(__file__), "static"),
@@ -268,6 +269,31 @@ class ManualStore( BaseHandler ):
             self.db.commit()   
 
         self.finish()
+
+class ToggleAutoRequeue( BaseHandler ):
+    @tornado.web.asynchronous
+    def get(self):
+        job_uuid = self.get_query_argument('job_uuid',default=None)
+        if job_uuid == None:
+            print job_uuid
+            LOGGER.error( "Bad input data" );
+            self.send_error(500)
+            return
+        try:
+            job_record = self.db.query(RenderJob).filter(RenderJob.uuid==job_uuid).one();
+        except NoResultFound:
+            LOGGER.error( "No job found for " + str(job_uuid) );
+            self.send_error(500);
+            return
+        else:           
+            if job_record.try_hard == 1:
+                job_record.try_hard = 0
+            else:
+                job_record.try_hard = 1;
+            self.db.commit()   
+
+        self.finish();
+    
 
 class ManualRequeue( BaseHandler ):
     @tornado.web.asynchronous
