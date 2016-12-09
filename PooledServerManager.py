@@ -213,6 +213,13 @@ class PooledServerManager(object):
         for job in active_jobs:
             times = self._db.query(Frame.start,Frame.end).join(RenderJob).filter(RenderJob.id==job.id).filter(Frame.status==4).all()
             waiting_count = self._db.query(Frame.start,Frame.end).join(RenderJob).filter(RenderJob.id==job.id).filter(Frame.status<4).count()
+            for i in range(len(times)):
+                times[i] = list( times[i] )
+                if times[i][0] == None:
+                    times[i][0] = datetime.now()
+                if times[i][1] == None:
+                    times[i][1] = datetime.now()
+                           
             if len(times) > 0:
                 start_time = sorted( times, key=lambda x: x[0] )[0][0]
                 end_time = sorted( times, key=lambda x: x[1] )[-1][1]
@@ -254,7 +261,8 @@ class PooledServerManager(object):
                                              properties=pika.BasicProperties(
                                                  delivery_mode = 2, # make message persistent           
                                             ))
-        frame.status = 1                
+        frame.status = 1
+        frame.node = ""
         self._db.commit();
 
 
@@ -270,6 +278,7 @@ class PooledServerManager(object):
                 if frame.status == 1 or frame.status == 2:
                     frame.start = datetime(*message["time"])
                     frame.status = 2
+                    frame.node = properties.app_id
                     LOGGER.info("Render Start Event recorded for frame " + uuid );
                 else:
                     LOGGER.warn("Render Start Event was unexpected for frame " + uuid );
@@ -285,6 +294,7 @@ class PooledServerManager(object):
                 if frame.status == 2:
                     frame.end = datetime(*message["time"])
                     frame.status = 3
+                    frame.node = properties.app_id
                     LOGGER.info("Render Finish Event recorded for frame " + uuid );
                 else:
                     LOGGER.warn("Render Finish Event was unexpected for frame " + uuid );
@@ -299,6 +309,7 @@ class PooledServerManager(object):
                 if frame.status == 2:
                     #frame.end = datetime(*message["time"])
                     frame.status = 5
+                    frame.node = properties.app_id
                     LOGGER.info("Render Fail Event recorded for frame " + uuid );
                 else:
                     LOGGER.warn("Render Fail Event was unexpected for frame " + uuid );

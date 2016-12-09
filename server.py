@@ -261,7 +261,7 @@ class StoreHandler( BaseHandler ):
         render = self.request.files['render'][0]
         original_fname = render['filename']
         extension = os.path.splitext(original_fname)[1]
-        fname = render_uuid
+        fname = frame.uuid
         final_filename= fname
         try:
             os.mkdir(os.path.join(self.data_path,"frame_cache"))

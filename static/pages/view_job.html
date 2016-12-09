@@ -161,7 +161,7 @@
                     {% if frame.status == 4%}
                     <div class="btn btn-success renderimg" img_src="/fetch_render?uuid={{ frame.uuid }}">View Image</div>
                     {% end %}
-                    {% if frame.status > 1 and frame.status != 4 %}
+                    {% if frame.status > 0 and frame.status != 4 %}
                     <div class="btn btn-info requeue_btn" uuid="{{ frame.uuid }}" target="/manual_requeue?uuid={{ frame.uuid }}">Requeue</div>
                     {% end %}  
                 </td>

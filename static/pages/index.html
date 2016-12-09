@@ -38,7 +38,7 @@
                               {% end %}
                           </div>
                       </td>
-                      <td>{% if mode=='completed' %}{{ job.end-job.start }}{% else %}{{ job.eta - now }}{% end %}</td>
+                      <td>{% if mode=='completed' %}{% if job.end!=None and job.start!=None %}{{ job.end-job.start }}{% end %}{% else %}{{ job.eta - now }}{% end %}</td>
                   </tr>
                   {% end %}
               </tbody>
