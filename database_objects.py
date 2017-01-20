@@ -23,13 +23,14 @@ class ManagerSettings(Base):
 class Settings(Base):
     __tablename__ = 'settings'
     id = Column(Integer, primary_key=True)
-    job_id = Column(Integer, ForeignKey('renderjob.id'), nullable=False)
+    job_id = Column(Integer, ForeignKey('renderjob.id'))
     timeout = Column(Integer)
     retries = Column(Integer)
+    priority = Column(Integer, default=0)
 
 class RenderJob(Base):
     __tablename__ = 'renderjob'
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer, primary_key=True, autoincrement=True)
     uuid = Column(String(34))
     name = Column(String(250), nullable=False)
     submitter = Column(String(250), nullable=False)
@@ -43,9 +44,17 @@ class RenderJob(Base):
     job_status = Column(Integer)
     try_hard = Column(Integer, default=0)
     eta = Column(DateTime)
-    settings = relationship("Settings", uselist=False, backref="job")    
-    
+    settings = relationship("Settings", uselist=False, backref="job")
+    type_id = Column("type", Integer, ForeignKey('scenetypes.id'), default=0)
+    type = relationship("SceneTypes")
 
+class SceneTypes(Base):
+    __tablename__ = 'scenetypes'
+    id = Column(Integer, primary_key=True)
+    type_id = Column(Text, nullable=False)
+    type_HR = Column(Text)
+    signatureFile = Column(Text)
+    
 class Frame(Base):
     __tablename__ = 'frame'
     id = Column(Integer, primary_key=True)

@@ -44,6 +44,15 @@
         {% if missing.get('frame-end',False) %}<span class="help-block">Please correct the error</span>{% end %}
     </div>
 
+    <div class="form-group {% if missing.get('job-type',False) %}has-error{% end %}">
+      <label for="job-type">Job Type:</label>
+      <select class="form-control" id="job-type" name="job-type">
+	{% for job_type in job_types %}
+	<option value="{{job_type.type_id}}">{{ job_type.type_HR }}</option>
+	{% end %}
+      </select>
+    </div>
+    
   <button type="submit" class="btn btn-default"> Submit</button>
 </form>
 

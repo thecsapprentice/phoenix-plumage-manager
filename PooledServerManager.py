@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 from datetime import datetime, timedelta
-from database_objects import Base, RenderJob, Frame, create_all
+from database_objects import Base, ManagerSettings, Settings, RenderJob, Frame, SceneTypes, create_all
 from sqlalchemy.orm.exc import MultipleResultsFound,NoResultFound
 from zipfile import ZipFile
 
@@ -116,10 +116,7 @@ class PooledServerManager(object):
 
     def setup_queue(self, queue_name):
         LOGGER.info('Declaring queue %s', queue_name)
-        self._channel.queue_declare(callback=self.null_result,queue="log_queue",
-                                    durable=True, exclusive=False, auto_delete=False)
-
-        self._channel.queue_declare(callback=self.on_render_queue_declareok,queue='render_queue',
+        self._channel.queue_declare(callback=self.on_render_queue_declareok,queue="log_queue",
                                     durable=True, exclusive=False, auto_delete=False)
         
         self.start_consuming();
@@ -161,9 +158,12 @@ class PooledServerManager(object):
         # Process all new jobs without frames generated yet...
         pending_jobs = self._db.query(RenderJob).filter_by(job_status=0).all()
         for job in pending_jobs:
+            self._channel.queue_declare(callback=self.on_render_queue_declareok,queue='render_'+job.uuid,
+                                        durable=True, exclusive=False, auto_delete=False)
             for f in range(job.frame_start,job.frame_end+1):
                 job.frames.append(Frame(frame=f, status=0,uuid=str(uuid.uuid4())));
             job.job_status=1
+            job.settings.priority = job.id;
         self._db.commit()
 
         # Frame Status codes
@@ -182,10 +182,10 @@ class PooledServerManager(object):
             message["scene"] = frame.job.scene
             message["uuid"] = frame.uuid
             message["command"] = "render"
-            message["type"] = "BLENDER" # For now we just support blender render jobs!!!
+            message["type"] = frame.job.type.type_id            
             
             status = self._channel.basic_publish(exchange='',
-                                                 routing_key='render_queue',
+                                                 routing_key='render_'+frame.job.uuid,
                                                  body=json.dumps(message),
                                                  properties=pika.BasicProperties(
                                                      delivery_mode = 2, # make message persistent           
@@ -234,6 +234,7 @@ class PooledServerManager(object):
                 job.eta = datetime.now()
             if self._db.query(RenderJob).join(Frame).filter(RenderJob.id==job.id).filter(Frame.status==4).count() == (job.frame_end - job.frame_start + 1) :
                 LOGGER.info("RenderJob " + job.uuid + " has been completed.")
+                
                 job.job_status = 2  
 
             # If try hard is enabled, check and requeue any failed frames
@@ -256,7 +257,7 @@ class PooledServerManager(object):
         message["type"] = "BLENDER" # For now we just support blender render jobs!!!
         
         status = self._channel.basic_publish(exchange='',
-                                             routing_key='render_queue',
+                                             routing_key='render_'+frame.job.uuid,
                                              body=json.dumps(message),
                                              properties=pika.BasicProperties(
                                                  delivery_mode = 2, # make message persistent           
@@ -330,12 +331,10 @@ class PooledServerManager(object):
                     frame.status = -1
                 else:
                     self._db.delete(frame);
+            self._channel.queue_delete(queue='render_'+job.uuid)
+            self._db.delete(job.settings)
             self._db.delete(job)
             self._db.commit()
-            self._channel.basic_consume( self.render_prune_callback,
-                                         'render_queue',
-                                         consumer_tag="frame_pruner")
-            
         
     def render_prune_callback(self, ch, method, properties, body):
         message = json.loads(body);
@@ -354,24 +353,53 @@ class PooledServerManager(object):
             self._channel.basic_cancel( consumer_tag="frame_pruner" )
 
             
-    def validate_job(self, submitter, email, name, scene, frame_start, frame_end):
+    def validate_job(self, submitter, email, name, scene, frame_start, frame_end, job_type):
         class validate_status:
-            def __init__(self, scenes_path, scene_name):
-                if os.path.isfile( os.path.join( scenes_path, scene_name, "scene.blend" ) ):
-                    self.good=True
-                    self.err_msg="success"
-                else:
+            def __init__(self, db, scenes_path, scene_name, job_type):
+                try:
+                    jobType = db.query(SceneTypes).filter(SceneTypes.type_id==job_type).one()
+                except NoResultFound:
                     self.good=False
-                    self.err_msg="Scene path is not valid."
+                    self.err_msg="Job type is not recognized."
+                else:
+                    if jobType.signatureFile:
+                        if os.path.isfile( os.path.join( scenes_path, scene_name, jobType.signatureFile ) ):
+                            self.good=True
+                            self.err_msg="success"
+                        else:
+                            self.good=False
+                            self.err_msg="Scene path is not valid."
+                    else:
+                        self.good=True
+                        self.err_msg="success"
                             
-        return validate_status(self._scene_path, scene)
+        return validate_status(self._db, self._scene_path, scene, job_type)
 
     def submit_job(self, job_record):
         job_record.job_status = 0
         job_record.uuid = str(uuid.uuid4())
-        self._db.add(job_record);        
-        self._db.commit();                
+        job_record.eta = datetime.now()
+        job_record.start = datetime.now()
+        job_record.end = datetime.now()
+        #self._db.add(job_record);
+                
+        job_settings = Settings()
+        job_settings.job = job_record
+        job_settings.timeout = self._db.query(ManagerSettings).first().timeout;
+        job_settings.retries = self._db.query(ManagerSettings).first().retries;
+        #self._db.add(job_settings)
 
+        self._db.add_all( [ job_record, job_settings ] )
+        try:
+            
+            self._db.commit();
+        except Exception, e:
+            print e
+            self._db.rollback();
+            return False
+        else:
+            return True
+        
 
     def on_cancelok(self, unused_frame):
         LOGGER.info('RabbitMQ acknowledged the cancellation of the consumer')

@@ -22,7 +22,7 @@ from zipfile import ZipFile
 import ui_methods
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker,scoped_session
-from database_objects import Base, RenderJob, Frame, create_all
+from database_objects import Base, RenderJob, Frame, SceneTypes, Settings, create_all
 from PooledServerManager import PooledServerManager as ServerManager
 from sqlalchemy.orm.exc import MultipleResultsFound,NoResultFound
 import argparse
@@ -44,6 +44,7 @@ class Application(tornado.web.Application):
             (r'/upload_render', StoreHandler),
             (r'/fetch_render', FetchHandler),
             (r'/cancel_job', JobCancelHandler),
+            (r'/available_jobs', JobListing),
             (r'/download_zip', DownloadZipHandler),
             (r'/manual_upload', ManualStore),
             (r'/manual_requeue', ManualRequeue),
@@ -127,7 +128,11 @@ class IndexHandler( BaseHandler ):
     def get(self):
         status_filter=int(self.get_argument("status",1))
         mode_map = ('pending','active','completed')
-        jobs=self.db.query(RenderJob).filter_by(job_status=status_filter).all()
+        if status_filter == 1:
+            jobs=self.db.query(RenderJob).join(RenderJob.settings).filter(RenderJob.job_status==status_filter).order_by(Settings.priority).all()
+        else:
+            jobs=self.db.query(RenderJob).filter(RenderJob.job_status==status_filter).all()
+            
         for j in jobs:
             j.p_f_complete = float(len([f for f in j.frames if f.status == 4]))/(j.frame_end - j.frame_start + 1)*100
             j.p_f_failed = float(len([f for f in j.frames if f.status == 5]))/(j.frame_end - j.frame_start + 1)*100
@@ -188,43 +193,53 @@ class DownloadZipHandler( BaseHandler ):
 class JobSubmissionHandler( BaseHandler ):
     @tornado.web.asynchronous
     def get(self):
+        job_types = self.db.query(SceneTypes).all()
+        
         params = {
             "uri":self.request.uri,
             "missing":{},
             "values":{},
+            "job_types":job_types,
         }
         params["new_job"] = False;
             
         self.render( "static/pages/jobsubmit.html", **params )
         
     def post(self):
+        job_types = self.db.query(SceneTypes).all()
         submitter = self.get_argument("submitter", default=None, strip=True)
         email = self.get_argument("email", default=None, strip=True)
         name = self.get_argument("name", default=None, strip=True)
         scene = self.get_argument("scene", default=None, strip=True)
         frame_start = self.get_argument("frame-start", default=None, strip=True)
         frame_end = self.get_argument("frame-end", default=None, strip=True)
+        job_type = self.get_argument("job-type", default=None, strip=True)
         print self.request.arguments
         
         params = {
             "uri":self.request.uri,
             "missing":{},
+            "job_types":job_types,
         }
         
-        if submitter == None or email == None or name == '' or scene == None or frame_start == None or frame_end == None:      
+        if submitter == None or email == None or name == '' or scene == None or frame_start == None or frame_end == None or job_type == None:      
             params["new_job"] = False;
             params["missing"] = {"submitter":submitter == '',
                                  "email":email == '',
                                  "name":name == '',
                                  "scene":scene == '',
                                  "frame-start":frame_start == '',
-                                 "frame-end":frame_end == ''}
+                                 "frame-end":frame_end == '',
+                                 "job-type":job_type == '',
+                             }
             params["values"] = {"submitter":submitter,
-                                 "email":email,
-                                 "name":name,
-                                 "scene":scene,
-                                 "frame-start":frame_start,
-                                 "frame-end":frame_end}
+                                "email":email,
+                                "name":name,
+                                "scene":scene,
+                                "frame-start":frame_start,
+                                "frame-end":frame_end,
+                                "job-type":job_type,
+                            }
         else:
             params["new_job"] = True;
 
@@ -233,22 +248,43 @@ class JobSubmissionHandler( BaseHandler ):
                                                name,
                                                scene,
                                                int(frame_start),
-                                               int(frame_end))
+                                               int(frame_end),
+                                               job_type,
+                                           )
             if status.good:
+                jobType = self.db.query(SceneTypes).filter(SceneTypes.type_id==job_type).one()
+                print jobType
                 renderjob = RenderJob(submitter=submitter,
                                       email=email,
                                       name=name,
                                       scene=scene,
                                       frame_start=int(frame_start),
-                                      frame_end=int(frame_end))
+                                      frame_end=int(frame_end),
+                                      type=jobType,
+                )
+                print renderjob
 
-                self.manager.submit_job(renderjob)
-                params["job_submit_success"] = True
+                results = self.manager.submit_job(renderjob)
+                if results:
+                    params["job_submit_success"] = True
+                else:
+                    params["job_submit_success"]  = False
+                    params["job_submit_error"] = "Failed to commit to database."
             else:
                 params["job_submit_success"] = False
                 params["job_submit_error"] = status.err_msg
             
         self.render( "static/pages/jobsubmit.html", **params )           
+
+class JobListing( BaseHandler ):
+    @tornado.web.asynchronous
+    def get(self):
+        active_jobs = self.db.query(RenderJob).join(RenderJob.settings).filter(RenderJob.job_status==1).order_by(Settings.priority).all()
+        jobs = []
+        for job in active_jobs:
+            jobs.append( [ job.uuid, job.type.type_id ] )
+        self.write( json.dumps( jobs ) )
+        self.finish()
         
 class StoreHandler( BaseHandler ):
     @tornado.web.asynchronous
