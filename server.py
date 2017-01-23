@@ -14,7 +14,6 @@ import random
 import copy
 import hashlib
 import sys
-from PIL import Image
 import io
 from tornado.options import define, options, parse_command_line
 import resource
@@ -26,6 +25,9 @@ from database_objects import Base, RenderJob, Frame, SceneTypes, Settings, creat
 from PooledServerManager import PooledServerManager as ServerManager
 from sqlalchemy.orm.exc import MultipleResultsFound,NoResultFound
 import argparse
+from requests_toolbelt import MultipartDecoder
+from wand.image import Image
+import glob
 
 import logging
 LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
@@ -53,7 +55,8 @@ class Application(tornado.web.Application):
         ]        
         settings = dict(
             static_path=os.path.join(os.path.dirname(__file__), "static"),
-            cookie_secret="some_long_secret_and_other_settins"
+            cookie_secret="some_long_secret_and_other_settins",
+            max_buffer_size=500*1024*1024,
         )
         tornado.web.Application.__init__(self, handlers, debug=True, ui_methods=ui_methods, **settings)
         # Have one global connection.
@@ -146,21 +149,55 @@ class IndexHandler( BaseHandler ):
         
         self.render( "static/pages/index.html", **params )
 
+class Counter(dict):
+    def __missing__(self, key):
+        return 0
+        
 class ViewJobHandler( BaseHandler ):
     @tornado.web.asynchronous
     def get(self):
-        jobid=self.get_argument("jobid")
+        job = self.getJobOrError()
+        categories = self.generate_completed_archives( job )
         params = {
             "uri":self.request.uri,
-            "job_data":self.db.query(RenderJob).get(int(jobid)),
+            "job_data":job,
+            "categories":categories,
             }
         for frame in params["job_data"].frames:
             if frame.start != None and frame.end != None:
                 frame.time = frame.end-frame.start
             else:
                 frame.time = ""
-        
+                
         self.render( "static/pages/view_job.html", **params )
+
+    def generate_completed_archives(self, job ):
+        if job.job_status != 2:
+            return []
+        save_dir = os.path.join(self.data_path,"completed_renders",job.name+"_"+job.uuid )
+        matches = glob.glob( os.path.join(save_dir, "*" ))
+        categories = Counter()
+        for match in matches:
+            basename = os.path.basename(match)
+            prefix, extension = os.path.splitext(basename)
+            try:
+                frame_id, postfix = prefix.split(".",1)
+            except:
+                frame_id = prefix
+                postfix = None
+            if postfix == None and frame_id.isdigit():
+                categories["render"] += 1
+            elif postfix != None and frame_id.isdigit():
+                categories[postfix] += 1
+
+        full_categories = []
+        for category, value in categories.items():
+            if value == len(job.frames):
+                full_categories.append( category )
+                
+        return full_categories
+        
+        
 
 class JobCancelHandler( BaseHandler ):
     @tornado.web.asynchronous
@@ -171,22 +208,44 @@ class JobCancelHandler( BaseHandler ):
         
 
 class DownloadZipHandler( BaseHandler ):
-    @tornado.web.asynchronous
+    @tornado.gen.coroutine
     def get(self):
         job = self.getJobOrError()
+        category = self.get_query_argument('category',default="render")
         if job==None:
             self.finish()
-            return
-        
+            return        
         save_dir = os.path.join(self.data_path,"completed_renders",job.name+"_"+job.uuid )
-        f=io.BytesIO()
-        zf = ZipFile(f, "w", allowZip64=True)
-        for frame in range(job.frame_start, job.frame_end+1):
-            zf.write(os.path.join(save_dir,str(frame)),arcname="render_{:08d}.png".format(frame))
-        zf.close()
+        zip_file = os.path.join( save_dir, job.uuid+"."+category+"."+"zip" )
+        if not os.path.exists( zip_file ):        
+            f=open( zip_file, 'wb' )
+            zf = ZipFile(f, "w", allowZip64=True)
+            for frame in range(job.frame_start, job.frame_end+1):
+                matches = glob.glob( os.path.join(save_dir, ("{:08d}".format(frame))+"*" ))
+                for match in matches:
+                    basename = os.path.basename(match)
+                    prefix, extension = os.path.splitext(basename)
+                    try:
+                        frame_id, postfix = prefix.split(".",1)
+                    except:
+                        frame_id = prefix
+                        postfix = None
+                    if postfix == None and frame_id.isdigit() and category == "render":
+                        zf.write(match,arcname="render_{:08d}{:s}".format(frame, extension))
+                    if postfix != None and frame_id.isdigit() and category == postfix:
+                        zf.write(match,arcname="{:s}_{:08d}{:s}".format(category,frame,extension))
+            zf.close()
+            f.close()
+            
+        f=open( zip_file, 'rb' )
         self.set_header('Content-Type', 'application/zip')
-        self.set_header("Content-Disposition", "attachment; filename=%s.zip" % (job.name+"_"+job.uuid) )
-        self.write(f.getvalue())
+        self.set_header("Content-Disposition", "attachment; filename=%s.zip" % (job.name+"_"+category) )
+        while True:
+            buf = f.read(64000)
+            self.write( buf )
+            yield self.flush()
+            if len(buf) < 64000:
+                break;            
         f.close()
         self.finish()
         
@@ -287,25 +346,36 @@ class JobListing( BaseHandler ):
         self.finish()
         
 class StoreHandler( BaseHandler ):
+
     @tornado.web.asynchronous
     def post(self):
         frame = self.getFrameOrError()
         if frame==None:
             self.finish()
             return
-        
-        render = self.request.files['render'][0]
-        original_fname = render['filename']
-        extension = os.path.splitext(original_fname)[1]
-        fname = frame.uuid
-        final_filename= fname
-        try:
-            os.mkdir(os.path.join(self.data_path,"frame_cache"))
-        except:
-            pass
-        output_file = open(os.path.join(self.data_path,"frame_cache",final_filename), 'w')
-        output_file.write(render['body'])
-        output_file.close()
+
+        print "Recieved image store request with the following images: "
+        print self.request.files.keys()
+
+        for key in self.request.files.keys():
+            render = self.request.files[key][0]
+            original_fname = render['filename']
+            extension = os.path.splitext(original_fname)[1]
+            fname = frame.uuid
+            if key == "render":
+                final_filename= fname+extension
+            else:
+                final_filename= fname+"."+key+extension
+                
+            try:
+                os.mkdir(os.path.join(self.data_path,"frame_cache"))
+            except:
+                pass
+            output_file = open(os.path.join(self.data_path,"frame_cache",final_filename), 'w')
+            
+            output_file.write(render['body'])
+            output_file.close()
+            
         self.finish()
 
 class FrameSettings( BaseHandler ):
@@ -395,28 +465,50 @@ class ManualRequeue( BaseHandler ):
             self.finish()
 
 class FetchHandler( BaseHandler ):
-    @tornado.web.asynchronous
+    @tornado.gen.coroutine
     def get(self):
         render_uuid = self.get_query_argument('uuid',default=None)
         if render_uuid == None:
             self.send_error(500)
-            return
+            self.finish()
         try:
             frame = self.db.query(Frame).filter_by(uuid=render_uuid).one()
         except NoResultFound:
             self.send_error(500);
-            return
+            self.finish()
         else:
             save_dir = os.path.join(self.data_path,"completed_renders",frame.job.name+"_"+frame.job.uuid )
-            f = Image.open(os.path.join(save_dir, str(frame.frame)))
+            matches = glob.glob( os.path.join(save_dir, str(frame.frame)+"*" ))
+            matches.extend(glob.glob( os.path.join(save_dir, ("{:08d}".format(frame.frame))+"*" )))
+            print matches
+            selected_match = ""
+            for match in matches:
+                base = os.path.basename( match )
+                print base
+                prefix, postfix = base.rsplit('.', 1 )
+                if prefix == str(frame.frame):
+                    selected_match = match
+                    break
+                
+            img = yield self.load_image(match)
             o = io.BytesIO()
-            f.save(o, format="PNG")
-            s = o.getvalue()
+            img.format = 'png'
+            loaded_o = yield self.save_image(img, o)
+            s = o.getvalue()           
             self.set_header('Content-type', 'image/png')
             self.set_header('Content-length', len(s))   
-            self.write(s)   
+            self.write(s)                
             self.finish()
 
+    @gen.coroutine
+    def load_image(self, filename):
+        raise tornado.gen.Return(Image(filename=filename))
+
+    @gen.coroutine
+    def save_image(self, img, o ):
+        img.save(file=o)
+        raise tornado.gen.Return(o)
+    
             
 def valid_path(path):
     if os.path.isdir( path ):
@@ -453,7 +545,7 @@ def main():
     server_manager = ServerManager( io_loop, app.db, **manager_config );
     app.server_manager = server_manager
     app.server_manager.connect()       
-    app.listen(args.port, '0.0.0.0')
+    app.listen(args.port, '0.0.0.0', max_buffer_size=500*1024*1024)
     io_loop.start()
 
 if __name__ == '__main__':

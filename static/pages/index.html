@@ -24,7 +24,7 @@
       {% for job in job_data %}
       <tr>
         <td>
-          <a href="/view_job?jobid={{ job.id }}">{% if mode=='active' %}{{ job_data.index(job)+1 }}{% else %}{{ job.id }}{% end %}</a>
+          <a href="/view_job?id={{ job.id }}">{% if mode=='active' %}{{ job_data.index(job)+1 }}{% else %}{{ job.id }}{% end %}</a>
         </td>
         <td>{{ job.scene }}</td>
         <td>{{ job.frame_end - job.frame_start + 1 }}</td>

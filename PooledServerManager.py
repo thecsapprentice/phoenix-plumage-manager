@@ -13,6 +13,8 @@ from datetime import datetime, timedelta
 from database_objects import Base, ManagerSettings, Settings, RenderJob, Frame, SceneTypes, create_all
 from sqlalchemy.orm.exc import MultipleResultsFound,NoResultFound
 from zipfile import ZipFile
+import glob
+from sqlalchemy import or_
 
 LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
               '-35s %(lineno) -5d: %(message)s')
@@ -194,20 +196,22 @@ class PooledServerManager(object):
         self._db.commit()
         
         # Collect all frames which are waiting on files
-        waiting_frames = self._db.query(Frame).filter_by(status=3).all()
-        for frame in waiting_frames:
-            filename = os.path.join( self._data_path, "frame_cache", frame.uuid )
-            exists = os.path.isfile( filename )
-            if exists:
+        filename = os.path.join( self._data_path, "frame_cache", "*" )
+        matches = glob.glob( filename )
+        for match in matches:
+            base = os.path.basename( match )
+            prefix, postfix = base.split('.', 1 )
+            frame = self._db.query(Frame).filter(Frame.uuid==prefix).one_or_none()
+            if frame != None:
                 save_dir = os.path.join(self._data_path,  "completed_renders",frame.job.name+"_"+frame.job.uuid )
                 try:
                     os.makedirs( save_dir  )
                 except:
                     pass
-                os.rename( filename, os.path.join(save_dir, str(frame.frame) ) )
+                os.rename( match, os.path.join(save_dir, ("{:08d}".format(frame.frame))+"."+postfix ) )
                 frame.status = 4
         self._db.commit()
-
+        
         # Check to see if a job has moved from active to completed, also update eta
         active_jobs = self._db.query(RenderJob).filter_by(job_status=1).all()
         for job in active_jobs:
@@ -254,7 +258,7 @@ class PooledServerManager(object):
         message["scene"] = frame.job.scene
         message["uuid"] = frame.uuid
         message["command"] = "render"
-        message["type"] = "BLENDER" # For now we just support blender render jobs!!!
+        message["type"] = frame.job.type.type_id
         
         status = self._channel.basic_publish(exchange='',
                                              routing_key='render_'+frame.job.uuid,
@@ -363,7 +367,7 @@ class PooledServerManager(object):
                     self.err_msg="Job type is not recognized."
                 else:
                     if jobType.signatureFile:
-                        if os.path.isfile( os.path.join( scenes_path, scene_name, jobType.signatureFile ) ):
+                        if len(glob.glob( os.path.join( scenes_path, scene_name, jobType.signatureFile ) )):
                             self.good=True
                             self.err_msg="success"
                         else:

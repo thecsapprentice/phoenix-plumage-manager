@@ -75,13 +75,27 @@
             {% end %}
             {% if job_data.job_status == 2 %}
             <div class="col-sm-1 col-md-2">
-                <a href="/download_zip?uuid={{ job_data.uuid }}" >
+                <a href="/download_zip?uuid={{ job_data.uuid }}&category=render" >
                     <button type="button" id="download_zip" class="btn btn-info" aria-label="Left Align">
                         <span class="glyphicon glyphicon-save" aria-hidden="true"></span>
-                        <span>Dowload Zip</span>
+                        <div>Renders</div>
+                        <div>Dowload Zip</div>
                     </button>
                 </a>
             </div>
+            {% for category in categories %}
+            {% if category != "render" %}
+            <div class="col-sm-1 col-md-2">
+                <a href="/download_zip?uuid={{ job_data.uuid }}&category={{ category }}" >
+                    <button type="button" id="download_zip" class="btn btn-default" aria-label="Left Align">
+                        <span class="glyphicon glyphicon-save" aria-hidden="true"></span>
+                        <div>{{ category.capitalize() }}</div>
+                        <div>Dowload Zip</div>
+                    </button>
+                </a>
+            </div>
+            {% end %}
+            {% end %}
             {% end %}
         </div>
     </div>
