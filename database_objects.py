@@ -17,8 +17,7 @@ class ManagerSettings(Base):
     managerData_path = Column(Text)
     timeout = Column(Integer)
     retries = Column(Integer)
-    broker_user = Column(String(128))
-    broker_pass = Column(String(128))    
+
     
 class Settings(Base):
     __tablename__ = 'settings'
@@ -27,6 +26,7 @@ class Settings(Base):
     timeout = Column(Integer)
     retries = Column(Integer)
     priority = Column(Integer, default=0)
+    try_hard = Column(Integer, default=0)
 
 class RenderJob(Base):
     __tablename__ = 'renderjob'
@@ -42,7 +42,6 @@ class RenderJob(Base):
     frame_end = Column(Integer)
     frames = relationship("Frame", order_by="Frame.id", backref="job")
     job_status = Column(Integer)
-    try_hard = Column(Integer, default=0)
     eta = Column(DateTime)
     settings = relationship("Settings", uselist=False, backref="job")
     type_id = Column("type", Integer, ForeignKey('scenetypes.id'), default=0)
@@ -67,7 +66,18 @@ class Frame(Base):
     node = Column(String(256),default="")
     frame_metadata = Column(Text,default="{}")    
     fail_count = Column(Integer,default=0)
+    images = relationship("Image", order_by="Frame.id", backref="frame")
     
+class Image(Base):
+    __tablename__ = 'image'
+    id = Column(Integer, primary_key=True)
+    frame_id = Column(Integer, ForeignKey('frame.id'))
+    path = Column(String(250), nullable=False)
+    category = Column(String(250), nullable=True)
+    timestamp = Column(DateTime)
+    uploader = Column(string(250), nullable=False)
+    extension = Column(string(20), nullable=False)
+
 metadata = Base.metadata
     
 def create_all(engine):

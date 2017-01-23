@@ -21,7 +21,7 @@ from zipfile import ZipFile
 import ui_methods
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker,scoped_session
-from database_objects import Base, RenderJob, Frame, SceneTypes, Settings, create_all
+from database_objects import Base, RenderJob, Frame, SceneTypes, Settings, Image, create_all
 from PooledServerManager import PooledServerManager as ServerManager
 from sqlalchemy.orm.exc import MultipleResultsFound,NoResultFound
 import argparse
@@ -48,7 +48,7 @@ class Application(tornado.web.Application):
             (r'/cancel_job', JobCancelHandler),
             (r'/available_jobs', JobListing),
             (r'/download_zip', DownloadZipHandler),
-            (r'/manual_upload', ManualStore),
+            #(r'/manual_upload', ManualStore),
             (r'/manual_requeue', ManualRequeue),
             (r'/toggle_auto_requeue', ToggleAutoRequeue),
             (r'/frame_settings', FrameSettings),
@@ -174,22 +174,11 @@ class ViewJobHandler( BaseHandler ):
     def generate_completed_archives(self, job ):
         if job.job_status != 2:
             return []
-        save_dir = os.path.join(self.data_path,"completed_renders",job.name+"_"+job.uuid )
-        matches = glob.glob( os.path.join(save_dir, "*" ))
+        images = self.db.query(Image).join(Image.frame).join(Image.frame.job).filter(Image.frame.job.id = job.id).all()
         categories = Counter()
-        for match in matches:
-            basename = os.path.basename(match)
-            prefix, extension = os.path.splitext(basename)
-            try:
-                frame_id, postfix = prefix.split(".",1)
-            except:
-                frame_id = prefix
-                postfix = None
-            if postfix == None and frame_id.isdigit():
-                categories["render"] += 1
-            elif postfix != None and frame_id.isdigit():
-                categories[postfix] += 1
-
+        for image in images:
+            categories[image.category] += 1
+        
         full_categories = []
         for category, value in categories.items():
             if value == len(job.frames):
@@ -221,19 +210,17 @@ class DownloadZipHandler( BaseHandler ):
             f=open( zip_file, 'wb' )
             zf = ZipFile(f, "w", allowZip64=True)
             for frame in range(job.frame_start, job.frame_end+1):
-                matches = glob.glob( os.path.join(save_dir, ("{:08d}".format(frame))+"*" ))
-                for match in matches:
-                    basename = os.path.basename(match)
-                    prefix, extension = os.path.splitext(basename)
-                    try:
-                        frame_id, postfix = prefix.split(".",1)
-                    except:
-                        frame_id = prefix
-                        postfix = None
-                    if postfix == None and frame_id.isdigit() and category == "render":
-                        zf.write(match,arcname="render_{:08d}{:s}".format(frame, extension))
-                    if postfix != None and frame_id.isdigit() and category == postfix:
-                        zf.write(match,arcname="{:s}_{:08d}{:s}".format(category,frame,extension))
+                image = self.db.query(Image).join(Image.frame).filter(_and(Image.category==category,
+                                                                            Image.frame==frame)).one_or_none()
+                if image == None:
+                    zf.close()
+                    f.close()
+                    os.remove( zip_file )
+                    self.send_error(403);
+                    self.finish()
+                    return;
+
+                zf.write(image.path,arcname="render_{:08d}{:s}".format(frame, image.extension))
             zf.close()
             f.close()
             
@@ -360,21 +347,48 @@ class StoreHandler( BaseHandler ):
         for key in self.request.files.keys():
             render = self.request.files[key][0]
             original_fname = render['filename']
-            extension = os.path.splitext(original_fname)[1]
+            extension = os.path.splitext(original_fname)[1][1:]
             fname = frame.uuid
             if key == "render":
-                final_filename= fname+extension
+                final_filename= ("{:08d}".format(frame.frame))+extension
             else:
-                final_filename= fname+"."+key+extension
+                final_filename= ("{:08d}.{:s}".format(frame.frame, key))+extension
                 
+            save_path = os.path.join(self.data_path, "completed_renders", frame.job.name+"_"+frame.job.uuid )
             try:
-                os.mkdir(os.path.join(self.data_path,"frame_cache"))
+                os.mkdir(save_path)
             except:
                 pass
-            output_file = open(os.path.join(self.data_path,"frame_cache",final_filename), 'w')
-            
+
+            existing_images = self.db.query(Image).join(Image.frame)filter( _and(Image.category==category,
+                                                                                 Image.frame.frame==frame.frame)).all()
+            if len(existing_images) == 1:
+                LOGGER.warning( "Received image store request for already stored image: Job {:d} Frame {:d} Category (:s}. Overwriting...".format( frame.job.id, frame.frame, category ) )
+            if len(existing_images) > 1:
+                LOGGER.warning( "Too many images recorded for: Job {:d} Frame {:d} Category (:s}. Failing store request...".format( frame.job.id, frame.frame, category ) )
+                self.finish()
+                return
+
+            output_file = open(os.path.join(self.data_path,"frame_cache",final_filename), 'w')           
             output_file.write(render['body'])
             output_file.close()
+
+            if len(existing_images) == 0:
+                image = Image( frame_id = frame.id,
+                               path = os.path.join( save_path, final_filename ),
+                               category = key,
+                               extension = extension,
+                               timestamp = datetime.now(),
+                               uploader = self.request.remote_ip )
+                
+                self.db.add(image);
+                self.db.commit();
+            else:
+                existing_images[0].path = save_path;
+                existing_images[0].timestamp = datetime.now()
+                existing_images[0].uploader = self.request.remote_ip
+                existing_images[0].extension = extension
+                self.db.commit()
             
         self.finish()
 
@@ -394,41 +408,41 @@ class FrameSettings( BaseHandler ):
         self.finish()
                               
             
-class ManualStore( BaseHandler ):
-    @tornado.web.asynchronous
-    def post(self):
-        job_uuid = self.get_argument('job_uuid',default=None)
-        frame = self.get_argument('frame',default=None)
-        if job_uuid == None or frame == None:
-            print job_uuid
-            print frame
-            LOGGER.error( "Bad input data" );
-            self.send_error(500)
-            return
-        try:
-            frame_record = self.db.query(Frame).join(RenderJob).filter(RenderJob.uuid==job_uuid).filter(Frame.frame==frame).one();
-        except NoResultFound:
-            LOGGER.error( "No frame " + str(frame) + " found for job " + str(job_uuid) );
-            self.send_error(500);
-            return
-        else:           
-            render = self.request.files['frame_file'][0]
-            original_fname = render['filename']
-            extension = os.path.splitext(original_fname)[1]
-            fname = frame_record.uuid
-            final_filename= fname
-            try:
-                os.mkdir(os.path.join(self.data_path,"frame_cache"))
-            except:
-                pass
-            output_file = open(os.path.join(self.data_path,"frame_cache",final_filename), 'w')
-            output_file.write(render['body'])
-            output_file.close()
-            frame_record.status = 3
-            frame_record.end = datetime.now()
-            self.db.commit()   
+# class ManualStore( BaseHandler ):
+#     @tornado.web.asynchronous
+#     def post(self):
+#         job_uuid = self.get_argument('job_uuid',default=None)
+#         frame = self.get_argument('frame',default=None)
+#         if job_uuid == None or frame == None:
+#             print job_uuid
+#             print frame
+#             LOGGER.error( "Bad input data" );
+#             self.send_error(500)
+#             return
+#         try:
+#             frame_record = self.db.query(Frame).join(RenderJob).filter(RenderJob.uuid==job_uuid).filter(Frame.frame==frame).one();
+#         except NoResultFound:
+#             LOGGER.error( "No frame " + str(frame) + " found for job " + str(job_uuid) );
+#             self.send_error(500);
+#             return
+#         else:           
+#             render = self.request.files['frame_file'][0]
+#             original_fname = render['filename']
+#             extension = os.path.splitext(original_fname)[1]
+#             fname = frame_record.uuid
+#             final_filename= fname
+#             try:
+#                 os.mkdir(os.path.join(self.data_path,"frame_cache"))
+#             except:
+#                 pass
+#             output_file = open(os.path.join(self.data_path,"frame_cache",final_filename), 'w')
+#             output_file.write(render['body'])
+#             output_file.close()
+#             frame_record.status = 3
+#             frame_record.end = datetime.now()
+#             self.db.commit()   
 
-        self.finish()
+#         self.finish()
 
 class ToggleAutoRequeue( BaseHandler ):
     @tornado.web.asynchronous
@@ -467,30 +481,15 @@ class ManualRequeue( BaseHandler ):
 class FetchHandler( BaseHandler ):
     @tornado.gen.coroutine
     def get(self):
-        render_uuid = self.get_query_argument('uuid',default=None)
-        if render_uuid == None:
-            self.send_error(500)
+        frame = self.getFrameOrError();
+        if frame==None:
             self.finish()
-        try:
-            frame = self.db.query(Frame).filter_by(uuid=render_uuid).one()
-        except NoResultFound:
-            self.send_error(500);
-            self.finish()
-        else:
-            save_dir = os.path.join(self.data_path,"completed_renders",frame.job.name+"_"+frame.job.uuid )
-            matches = glob.glob( os.path.join(save_dir, str(frame.frame)+"*" ))
-            matches.extend(glob.glob( os.path.join(save_dir, ("{:08d}".format(frame.frame))+"*" )))
-            print matches
-            selected_match = ""
-            for match in matches:
-                base = os.path.basename( match )
-                print base
-                prefix, postfix = base.rsplit('.', 1 )
-                if prefix == str(frame.frame):
-                    selected_match = match
-                    break
-                
-            img = yield self.load_image(match)
+            return
+        category = self.get_query_argument('category',default="render")
+        image = self.db.query(Image).join(Image.frame).filter(_and(Image.category==category,
+                                                                   Image.frame==frame)).one_or_none()
+        if image != None:
+            img = yield self.load_image(image.path)
             o = io.BytesIO()
             img.format = 'png'
             loaded_o = yield self.save_image(img, o)
@@ -498,6 +497,9 @@ class FetchHandler( BaseHandler ):
             self.set_header('Content-type', 'image/png')
             self.set_header('Content-length', len(s))   
             self.write(s)                
+            self.finish()
+        else:
+            self.send_error(403)
             self.finish()
 
     @gen.coroutine

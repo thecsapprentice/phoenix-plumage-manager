@@ -196,21 +196,29 @@ class PooledServerManager(object):
         self._db.commit()
         
         # Collect all frames which are waiting on files
-        filename = os.path.join( self._data_path, "frame_cache", "*" )
-        matches = glob.glob( filename )
-        for match in matches:
-            base = os.path.basename( match )
-            prefix, postfix = base.split('.', 1 )
-            frame = self._db.query(Frame).filter(Frame.uuid==prefix).one_or_none()
-            if frame != None:
-                save_dir = os.path.join(self._data_path,  "completed_renders",frame.job.name+"_"+frame.job.uuid )
-                try:
-                    os.makedirs( save_dir  )
-                except:
-                    pass
-                os.rename( match, os.path.join(save_dir, ("{:08d}".format(frame.frame))+"."+postfix ) )
+        incomplete_frames = self._db.query(Frame).filter_by(status=2).all()
+        for frame in incomplete_frames:
+            uploaded_render = self._db.query(Image).join(Image.frame).filter( _and( Image.category=="render",
+                                                                                    Image.frame = frame ) ).one_or_none()
+            if uploaded_render != None:
                 frame.status = 4
         self._db.commit()
+
+        # filename = os.path.join( self._data_path, "frame_cache", "*" )
+        # matches = glob.glob( filename )
+        # for match in matches:
+        #     base = os.path.basename( match )
+        #     prefix, postfix = base.split('.', 1 )
+        #     frame = self._db.query(Frame).filter(Frame.uuid==prefix).one_or_none()
+        #     if frame != None:
+        #         save_dir = os.path.join(self._data_path,  "completed_renders",frame.job.name+"_"+frame.job.uuid )
+        #         try:
+        #             os.makedirs( save_dir  )
+        #         except:
+        #             pass
+        #         os.rename( match, os.path.join(save_dir, ("{:08d}".format(frame.frame))+"."+postfix ) )
+        #         frame.status = 4
+        # self._db.commit()
         
         # Check to see if a job has moved from active to completed, also update eta
         active_jobs = self._db.query(RenderJob).filter_by(job_status=1).all()
