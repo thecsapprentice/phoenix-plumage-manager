@@ -19,14 +19,14 @@ from tornado.options import define, options, parse_command_line
 import resource
 from zipfile import ZipFile
 import ui_methods
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, and_, or_, desc
 from sqlalchemy.orm import sessionmaker,scoped_session
 from database_objects import Base, RenderJob, Frame, SceneTypes, Settings, Image, create_all
 from PooledServerManager import PooledServerManager as ServerManager
 from sqlalchemy.orm.exc import MultipleResultsFound,NoResultFound
 import argparse
 from requests_toolbelt import MultipartDecoder
-from wand.image import Image
+from wand.image import Image as WandImage
 import glob
 
 import logging
@@ -45,6 +45,7 @@ class Application(tornado.web.Application):
             (r'/view_job', ViewJobHandler),
             (r'/upload_render', StoreHandler),
             (r'/fetch_render', FetchHandler),
+            (r'/fetch_previewclip', FetchPreview),
             (r'/cancel_job', JobCancelHandler),
             (r'/available_jobs', JobListing),
             (r'/download_zip', DownloadZipHandler),
@@ -52,6 +53,7 @@ class Application(tornado.web.Application):
             (r'/manual_requeue', ManualRequeue),
             (r'/toggle_auto_requeue', ToggleAutoRequeue),
             (r'/frame_settings', FrameSettings),
+            (r'/make_priority', MakePriority),
         ]        
         settings = dict(
             static_path=os.path.join(os.path.dirname(__file__), "static"),
@@ -149,6 +151,23 @@ class IndexHandler( BaseHandler ):
         
         self.render( "static/pages/index.html", **params )
 
+class MakePriority( BaseHandler ):
+    def get(self):
+        job = self.getJobOrError()
+        if job == None:
+            self.redirect("/")
+
+        if job.job_status < 4 :
+            old_priority = job.settings.priority
+            other_jobs = self.db.query(RenderJob).join(RenderJob.settings).filter( and_(RenderJob.job_status < 4,
+                                                                                        Settings.priority < old_priority) ).all()
+            job.settings.priority = 0
+            for other_job in other_jobs:
+                other_job.settings.priority += 1
+            self.db.commit()
+            
+        self.redirect("/")
+        
 class Counter(dict):
     def __missing__(self, key):
         return 0
@@ -174,7 +193,13 @@ class ViewJobHandler( BaseHandler ):
     def generate_completed_archives(self, job ):
         if job.job_status != 2:
             return []
-        images = self.db.query(Image).join(Image.frame).join(Image.frame.job).filter(Image.frame.job.id = job.id).all()
+        
+        images = self.db.query(Image)    
+        images = images.join( Image.frame )
+        images = images.join( Frame.job )
+        images = images.filter( Frame.job_id == job.id )
+        images = images.all()
+
         categories = Counter()
         for image in images:
             categories[image.category] += 1
@@ -209,18 +234,22 @@ class DownloadZipHandler( BaseHandler ):
         if not os.path.exists( zip_file ):        
             f=open( zip_file, 'wb' )
             zf = ZipFile(f, "w", allowZip64=True)
-            for frame in range(job.frame_start, job.frame_end+1):
-                image = self.db.query(Image).join(Image.frame).filter(_and(Image.category==category,
-                                                                            Image.frame==frame)).one_or_none()
-                if image == None:
-                    zf.close()
-                    f.close()
-                    os.remove( zip_file )
-                    self.send_error(403);
-                    self.finish()
-                    return;
-
-                zf.write(image.path,arcname="render_{:08d}{:s}".format(frame, image.extension))
+            images = self.db.query(Image)    
+            images = images.join( Image.frame )
+            images = images.join( Frame.job )
+            images = images.filter( Frame.job_id == job.id )
+            images = images.filter( Image.category == category )
+            images = images.order_by(Frame.frame)
+            images = images.all()
+            if len(images) != (job.frame_end - job.frame_start + 1):
+                zf.close()
+                f.close()
+                os.remove( zip_file )
+                self.send_error(403);
+                self.finish()
+                return;
+            for image in images:
+                zf.write(image.path,arcname="render_{:08d}.{:s}".format(image.frame.frame, image.extension))
             zf.close()
             f.close()
             
@@ -331,6 +360,36 @@ class JobListing( BaseHandler ):
             jobs.append( [ job.uuid, job.type.type_id ] )
         self.write( json.dumps( jobs ) )
         self.finish()
+
+def Rebuild_Previews(image, b ):
+    wandImage = WandImage( file=b )
+    wandImage.format = 'png'
+    wandImage.sample(max(100,wandImage.width/4), max(wandImage.height/4,100))
+    dirname = os.path.dirname( image.path )
+    basename = os.path.basename( image.path )
+    prefix, extension = os.path.splitext( basename )
+    wandImage.save( filename=os.path.join( dirname, "preview_{:s}.png".format(prefix) ) )
+    image.preview_path = os.path.join( dirname, "preview_{:s}.png".format(prefix) )
+
+def Rebuild_PreviewAnimation( db, job, data_path ):
+    images = db.query(Image)    
+    images = images.join( Image.frame )
+    images = images.join( Frame.job )
+    images = images.filter( Frame.job_id == job.id )
+    images = images.filter( Image.category == "render" )
+    images = images.all()
+
+    with WandImage() as gif_preview:
+        for image in images:
+            if image.preview_path:
+                with WandImage( filename=image.preview_path ) as f:
+                    gif_preview.sequence.append(f)
+        for cursor in range( len( gif_preview.sequence )):
+            with gif_preview.sequence[cursor] as f:
+                f.delay = 4 # 4 hundredths of a second ~24 fps
+        gif_preview.type='truecolor'
+        save_path = os.path.join(data_path, "completed_renders", job.name+"_"+job.uuid )
+        gif_preview.save( filename=os.path.join( save_path, "preview.gif" ) )
         
 class StoreHandler( BaseHandler ):
 
@@ -344,24 +403,24 @@ class StoreHandler( BaseHandler ):
         print "Recieved image store request with the following images: "
         print self.request.files.keys()
 
-        for key in self.request.files.keys():
-            render = self.request.files[key][0]
+        for category in self.request.files.keys():
+            render = self.request.files[category][0]
             original_fname = render['filename']
             extension = os.path.splitext(original_fname)[1][1:]
             fname = frame.uuid
-            if key == "render":
-                final_filename= ("{:08d}".format(frame.frame))+extension
+            if category == "render":
+                final_filename= ("{:08d}.".format(frame.frame))+extension
             else:
-                final_filename= ("{:08d}.{:s}".format(frame.frame, key))+extension
+                final_filename= ("{:08d}.{:s}.".format(frame.frame, category))+extension
                 
             save_path = os.path.join(self.data_path, "completed_renders", frame.job.name+"_"+frame.job.uuid )
             try:
-                os.mkdir(save_path)
-            except:
-                pass
+                os.makedirs(save_path)
+            except Exception, e:
+                LOGGER.error("Error while creating save directory: {:s}".format(str(e)) )
 
-            existing_images = self.db.query(Image).join(Image.frame)filter( _and(Image.category==category,
-                                                                                 Image.frame.frame==frame.frame)).all()
+            existing_images = self.db.query(Image).join(Image.frame).filter( and_(Image.category==category,
+                                                                                 Image.frame==frame)).all()
             if len(existing_images) == 1:
                 LOGGER.warning( "Received image store request for already stored image: Job {:d} Frame {:d} Category (:s}. Overwriting...".format( frame.job.id, frame.frame, category ) )
             if len(existing_images) > 1:
@@ -369,29 +428,42 @@ class StoreHandler( BaseHandler ):
                 self.finish()
                 return
 
-            output_file = open(os.path.join(self.data_path,"frame_cache",final_filename), 'w')           
+            output_file = open(os.path.join(save_path, final_filename), 'w')           
             output_file.write(render['body'])
             output_file.close()
 
             if len(existing_images) == 0:
                 image = Image( frame_id = frame.id,
                                path = os.path.join( save_path, final_filename ),
-                               category = key,
+                               category = category,
                                extension = extension,
                                timestamp = datetime.now(),
-                               uploader = self.request.remote_ip )
-                
+                               uploader = self.request.remote_ip )                
                 self.db.add(image);
-                self.db.commit();
+                self.db.commit()
+                
+                if category == "render":
+                    b = io.BytesIO( render["body"] )
+                    Rebuild_Previews( image, b )                    
+                    self.db.commit();
             else:
                 existing_images[0].path = save_path;
                 existing_images[0].timestamp = datetime.now()
                 existing_images[0].uploader = self.request.remote_ip
                 existing_images[0].extension = extension
                 self.db.commit()
-            
-        self.finish()
+                
+                if category == "render":
+                    b = io.BytesIO( render["body"] )
+                    Rebuild_Previews( existing_images[0], b )
+                    self.db.commit()
 
+            if category == "render":
+                Rebuild_PreviewAnimation(self.db, frame.job, self.data_path )
+                
+        self.finish()
+      
+        
 class FrameSettings( BaseHandler ):
     @tornado.web.asynchronous
     def get(self):
@@ -486,31 +558,56 @@ class FetchHandler( BaseHandler ):
             self.finish()
             return
         category = self.get_query_argument('category',default="render")
-        image = self.db.query(Image).join(Image.frame).filter(_and(Image.category==category,
+        image = self.db.query(Image).join(Image.frame).filter(and_(Image.category==category,
                                                                    Image.frame==frame)).one_or_none()
         if image != None:
-            img = yield self.load_image(image.path)
-            o = io.BytesIO()
-            img.format = 'png'
-            loaded_o = yield self.save_image(img, o)
-            s = o.getvalue()           
-            self.set_header('Content-type', 'image/png')
-            self.set_header('Content-length', len(s))   
-            self.write(s)                
+            if not image.preview_path:
+                Rebuild_Previews( image, open( image.path, 'rb' ) )
+                self.db.commit();
+
+            psize = 0;
+            with open(image.preview_path, 'rb' ) as preview:
+                self.set_header('Content-type', 'image/png')
+                while True:
+                    buf = preview.read(64000)
+                    self.write( buf )
+                    yield self.flush()
+                    psize+=len(buf)
+                    if len(buf) < 64000:
+                        break;            
+            self.set_header('Content-length', psize )
             self.finish()
         else:
             self.send_error(403)
             self.finish()
 
-    @gen.coroutine
-    def load_image(self, filename):
-        raise tornado.gen.Return(Image(filename=filename))
 
-    @gen.coroutine
-    def save_image(self, img, o ):
-        img.save(file=o)
-        raise tornado.gen.Return(o)
-    
+class FetchPreview( BaseHandler ):
+    @tornado.gen.coroutine
+    def get(self):
+        job = self.getJobOrError();
+        if job==None:
+            self.finish()
+            return
+        psize = 0;
+
+        preview_path = os.path.join( self.data_path, "completed_renders", job.name + "_" + job.uuid, "preview.gif" )        
+        try:
+            with open(preview_path, 'rb' ) as preview:
+                self.set_header('Content-type', 'image/gif')
+                while True:
+                    buf = preview.read(64000)
+                    self.write( buf )
+                    yield self.flush()
+                    psize+=len(buf)
+                    if len(buf) < 64000:
+                        break;            
+                self.set_header('Content-length', psize )
+                self.finish()
+        except:
+            self.send_error(403)
+            self.finish()
+            
             
 def valid_path(path):
     if os.path.isdir( path ):

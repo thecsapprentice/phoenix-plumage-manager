@@ -10,11 +10,11 @@ import hashlib
 import json
 import os
 from datetime import datetime, timedelta
-from database_objects import Base, ManagerSettings, Settings, RenderJob, Frame, SceneTypes, create_all
+from database_objects import Base, ManagerSettings, Settings, RenderJob, Frame, SceneTypes, Image, create_all
 from sqlalchemy.orm.exc import MultipleResultsFound,NoResultFound
 from zipfile import ZipFile
 import glob
-from sqlalchemy import or_
+from sqlalchemy import or_, and_
 
 LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
               '-35s %(lineno) -5d: %(message)s')
@@ -196,10 +196,10 @@ class PooledServerManager(object):
         self._db.commit()
         
         # Collect all frames which are waiting on files
-        incomplete_frames = self._db.query(Frame).filter_by(status=2).all()
+        incomplete_frames = self._db.query(Frame).filter_by(status=3).all()
         for frame in incomplete_frames:
-            uploaded_render = self._db.query(Image).join(Image.frame).filter( _and( Image.category=="render",
-                                                                                    Image.frame = frame ) ).one_or_none()
+            uploaded_render = self._db.query(Image).join(Image.frame).filter( and_( Image.category=="render",
+                                                                                    Image.frame == frame ) ).one_or_none()
             if uploaded_render != None:
                 frame.status = 4
         self._db.commit()
@@ -242,15 +242,18 @@ class PooledServerManager(object):
                 #    eta_d = eta_d + delta
                 eta_d = end_time - start_time;
                 job.eta = datetime.now() + timedelta(seconds=eta_d.total_seconds()/len(times)) * waiting_count
+                job.start = start_time
+                job.end = end_time
             else:
                 job.eta = datetime.now()
-            if self._db.query(RenderJob).join(Frame).filter(RenderJob.id==job.id).filter(Frame.status==4).count() == (job.frame_end - job.frame_start + 1) :
+            if self._db.query(RenderJob).join(Frame).filter(RenderJob.id==job.id).filter(Frame.status==4).count() == (job.frame_end - job.frame_start + 1) :                
                 LOGGER.info("RenderJob " + job.uuid + " has been completed.")
+                self._channel.queue_delete(queue='render_'+job.uuid)
+                job.job_status = 2
                 
-                job.job_status = 2  
 
             # If try hard is enabled, check and requeue any failed frames
-            if job.try_hard == 1:
+            if job.settings.try_hard == 1:
                 failed_frames = self._db.query(Frame).join(RenderJob).filter(RenderJob.id==job.id).filter(Frame.status==5).all()
                 for failed_frame in failed_frames:
                     requeue( failed_frame )
@@ -320,7 +323,7 @@ class PooledServerManager(object):
                 LOGGER.warn("Render Fail Event for unknown frame "+uuid )
             else:
                 if frame.status == 2:
-                    #frame.end = datetime(*message["time"])
+                    frame.end = datetime.now()
                     frame.status = 5
                     frame.node = properties.app_id
                     LOGGER.info("Render Fail Event recorded for frame " + uuid );
@@ -399,18 +402,27 @@ class PooledServerManager(object):
         job_settings.job = job_record
         job_settings.timeout = self._db.query(ManagerSettings).first().timeout;
         job_settings.retries = self._db.query(ManagerSettings).first().retries;
+        job_settings.try_hard = 0        
         #self._db.add(job_settings)
 
         self._db.add_all( [ job_record, job_settings ] )
-        try:
-            
+        try:            
             self._db.commit();
         except Exception, e:
             print e
             self._db.rollback();
             return False
-        else:
-            return True
+        
+        job_settings.priority = job_record.id
+        
+        try:            
+            self._db.commit();
+        except Exception, e:
+            print e
+            self._db.rollback();
+            return False
+
+        return True
         
 
     def on_cancelok(self, unused_frame):

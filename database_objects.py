@@ -75,9 +75,10 @@ class Image(Base):
     path = Column(String(250), nullable=False)
     category = Column(String(250), nullable=True)
     timestamp = Column(DateTime)
-    uploader = Column(string(250), nullable=False)
-    extension = Column(string(20), nullable=False)
-
+    uploader = Column(String(250), nullable=False)
+    extension = Column(String(20), nullable=False)
+    preview_path = Column(String(250))
+    
 metadata = Base.metadata
     
 def create_all(engine):

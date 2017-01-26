@@ -6,47 +6,46 @@
 <div class="panel panel-info">
     <div class="panel-heading">Job Details</div>
     <div class="panel-body">
-        <ul class="list-group">
-            <li class="list-group-item">
-                <h4 class="list-group-item-heading">Job ID</h4>
-                <p class="list-group-item-text">                    
-                    {{ job_data.id }}
-                </p>
-            </li>
-            <li class="list-group-item">
-                <h4 class="list-group-item-heading">Job Submitter</h4>
-                <p class="list-group-item-text">{{ job_data.submitter }}</p>
-            </li>
-            <li class="list-group-item">
-                <h4 class="list-group-item-heading">Job Submitter Email</h4>
-                <p class="list-group-item-text">{{ job_data.email }}</p>
-            </li>
-            <li class="list-group-item">
-                <h4 class="list-group-item-heading">Job Name</h4>
-                <p class="list-group-item-text">{{ job_data.name }}</p>
-            </li>
-            <li class="list-group-item">
-                <h4 class="list-group-item-heading">Job Scene</h4>
-                <p class="list-group-item-text">{{ job_data.scene }}</p>
-            </li>
-            <li class="list-group-item">
-                <h4 class="list-group-item-heading">Job Frame Start</h4>
-                <p class="list-group-item-text">{{ job_data.frame_start }}</p>
-            </li>
-            <li class="list-group-item">
-                <h4 class="list-group-item-heading">Job Frame End</h4>
-                <p class="list-group-item-text">{{ job_data.frame_end }}</p>
-            </li>                              
-        </ul>
+
+      <dl class="dl-horizontal">
+	<dt>Job ID</dt>
+	<dd>{{job_data.id}}</dd>
+      </dl>
+
+      <dl class="dl-horizontal">
+	<dt>Submitter</dt>
+	<dd>
+	  <address>
+	    <strong>{{job_data.submitter}}</strong>
+	    <a href="mailto:#">{{job_data.email}}</a>
+	  </address>
+	</dd>
+      </dl>
+
+      <dl class="dl-horizontal">
+	<dt>Job Name</dt>
+	<dd>{{job_data.name}}</dd>
+      </dl>
+
+      <dl class="dl-horizontal">
+	<dt>Scene</dt>
+	<dd>{{job_data.scene}}</dd>
+      </dl>
+
+      <dl class="dl-horizontal">
+	<dt>Frames</dt>
+	<dd>{{job_data.frame_start}} - {{job_data.frame_end}}</dd>
+      </dl>
+
     </div>
 </div>
 
 <div class="panel panel-info">
     <div class="panel-heading">Actions</div>
-    <div class="panel-body">
+    <div class="panel-body container-fluid">
         <div class="row">
             {% if job_data.job_status == 1 %}
-            <div class="col-sm-1 col-md-2">
+            <div class="col-sm-4 col-md-2 text-center">
                 <a href="/cancel_job?uuid={{ job_data.uuid }}" >
                     <button type="button" id="delete_job" class="btn btn-danger" aria-label="Left Align">
                         <span class="glyphicon glyphicon-trash" aria-hidden="true"></span>
@@ -55,6 +54,7 @@
                 </a>
             </div>
             {% end %}
+	    <!--
             {% if job_data.job_status == 1 %}
             <div class="col-sm-1 col-md-2">
                 <button type="button" id="manual_submit" class="btn btn-info" aria-label="Left Align" data-toggle="modal" data-target="#manual-submit-form">
@@ -63,18 +63,25 @@
                 </button>
             </div>
             {% end %}
+            -->
             {% if job_data.job_status == 1 %}
-            <div class="col-sm-1 col-md-2">
+            <div class="col-sm-4 col-md-2 text-center">
                 <a href="/toggle_auto_requeue?uuid={{ job_data.uuid }}" >
-                    <button type="button" id="toggle_auto_requeue" class="btn {% if job_data.try_hard == 1 %}btn-info{% else %}btn-default{% end %}" aria-label="Left Align">
+                    <button type="button" id="toggle_auto_requeue" class="btn {% if job_data.settings.try_hard == 1 %}btn-info{% else %}btn-default{% end %}" aria-label="Left Align">
                         <span class="glyphicon glyphicon-retweet" aria-hidden="true"></span>
-                        <span>{% if job_data.try_hard == 1 %}Disable Auto-Requeue{% else %}Enable Auto-Requeue{% end %}</span>
+                        <span>{% if job_data.settings.try_hard == 1 %}Disable Auto-Requeue{% else %}Enable Auto-Requeue{% end %}</span>
                     </button>
                 </a>
             </div>
             {% end %}
+	    <div class="col-sm-4 col-md-2 text-center">
+	      <div class="btn btn-success renderimg" img_src="/fetch_previewclip?uuid={{ job_data.uuid }}">View Preview</div>
+	    </div>
+    	</div>
+	
+	<div class="row">
             {% if job_data.job_status == 2 %}
-            <div class="col-sm-1 col-md-2">
+            <div class="col-sm-4 col-md-2 text-center">
                 <a href="/download_zip?uuid={{ job_data.uuid }}&category=render" >
                     <button type="button" id="download_zip" class="btn btn-info" aria-label="Left Align">
                         <span class="glyphicon glyphicon-save" aria-hidden="true"></span>
@@ -85,7 +92,7 @@
             </div>
             {% for category in categories %}
             {% if category != "render" %}
-            <div class="col-sm-1 col-md-2">
+            <div class="col-sm-4 col-md-2 text-center">
                 <a href="/download_zip?uuid={{ job_data.uuid }}&category={{ category }}" >
                     <button type="button" id="download_zip" class="btn btn-default" aria-label="Left Align">
                         <span class="glyphicon glyphicon-save" aria-hidden="true"></span>
@@ -97,7 +104,7 @@
             {% end %}
             {% end %}
             {% end %}
-        </div>
+	</div>
     </div>
 </div>
    
@@ -134,7 +141,7 @@
 
 <div class="panel panel-info">
     <div class="panel-heading">Job Frame Status</div>         
-    <table data-toggle="table" class="table table-striped table-hover" id="jobstatus-table" data-sort-name="frame-number" data-sort-order="asc">
+    <table data-toggle="table" class="table table-hover" id="jobstatus-table" data-sort-name="frame-number" data-sort-order="asc">
         <thead>
             <tr>
                 <th data-field="frame-number" data-sortable="true">Frame</th>
@@ -147,10 +154,10 @@
         </thead>
         <tbody>
             {% for frame in job_data.frames %}
-            <tr id="frame-row-{{ frame.uuid }}" class="{% if frame.status == 4%}success{% elif frame.status == 5 %}danger{% end %}">
+            <tr id="frame-row-{{ frame.uuid }}" class="{% if frame.status == 4%}success{% elif frame.status == 2 %}info{% elif frame.status == 4 %}warning{% elif frame.status == 5 %}danger{% end %}">
                 <td class="frame-tbl-id">{{ frame.frame }}</td>
-                <td class="frame-tbl-complete">{% if frame.status < 3 %}NO{% else %}YES{% end%}</td>
-                <td class="frame-tbl-status">
+                <td class="frame-tbl-complete text-center">{% if frame.status < 3 %}NO{% else %}YES{% end%}</td>
+                <td class="frame-tbl-status text-center">
                     {% if frame.status == 0 or frame.status == 1 %}
                     WAITING
                     {% elif frame.status == 2%}
@@ -165,13 +172,13 @@
                     UNKNOWN
                     {% end%}
                 </td>
-                <td class="frame-tbl-time">
+                <td class="frame-tbl-time text-center">
                     {{ frame.time }}
                 </td>
-		<td>
+		<td class="frame-tbl-node text-center">
 		  {{ frame.node }}
                 </td>
-                <td class="frame-tbl-actions">
+                <td class="frame-tbl-actions text-center">
                     {% if frame.status == 4%}
                     <div class="btn btn-success renderimg" img_src="/fetch_render?uuid={{ frame.uuid }}">View Image</div>
                     {% end %}
@@ -203,53 +210,6 @@
  $('tbody.rowlink').rowlink()       
 </script>
 
-<script>
- $(document).ready(function(){
-     $('div.renderimg').on('click',function(){
-         var src = $(this).attr('img_src');
-         var img = '<img src="' + src + '" class="img-responsive"/>';
-         $('#myModal').modal();
-         $('#myModal').on('shown.bs.modal', function(){
-             $('#myModal .modal-body').html(img);
-         });
-         $('#myModal').on('hidden.bs.modal', function(){
-             $('#myModal .modal-body').html('');
-         });
-     });
-
-     $('div.requeue_btn').on('click',function(){
-         $.ajax( {
-             url: $(this).attr('target'),
-             type: 'GET',
-             processData: false,
-             contentType: false,
-             complete: function() {
-                 $('#frame-row-'+$(this).attr('uuid')+' .frame-tbl-complete').text("NO");
-                 $('#frame-row-'+$(this).attr('uuid')+' .frame-tbl-status').text("WAITING");
-                 $('#frame-row-'+$(this).attr('uuid')+' .frame-tbl-time').text("");
-                 $('#frame-row-'+$(this).attr('uuid')+' .frame-tbl-actions').text("");
-             }.bind(this)
-         } );
-     });
-
-     $( '#form-manual_upload' )
-      .submit( function( e ) {
-          var data = new FormData($('#form-manual_upload')[0]);
-          data.append( "job_uuid",  "{{ job_data.uuid }}" );
-          console.log( data )
-              $.ajax( {
-                  url: '/manual_upload',
-                  type: 'POST',
-                  data: data,
-                  processData: false,
-                  contentType: false
-              } );
-          e.preventDefault();
-          $('#manual-submit-form').modal('hide');
-      }.bind(this) );
-
-
- })
-</script>
+<script src="static/lib/view_job.js"> </script>
 
 {% end %}

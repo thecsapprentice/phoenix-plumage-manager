@@ -1,0 +1,15 @@
+.btn {
+    margin: 10px;
+}
+
+.modal-body {
+    display: flex;
+    justify-content: center;
+}
+
+address {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 0px;
+}
+    
