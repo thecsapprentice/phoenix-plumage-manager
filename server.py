@@ -28,6 +28,7 @@ import argparse
 from requests_toolbelt import MultipartDecoder
 from wand.image import Image as WandImage
 import glob
+from concurrent.futures import ProcessPoolExecutor
 
 import logging
 LOG_FORMAT = ('%(levelname) -10s %(asctime)s %(name) -30s %(funcName) '
@@ -377,6 +378,7 @@ def Rebuild_PreviewAnimation( db, job, data_path ):
     images = images.join( Frame.job )
     images = images.filter( Frame.job_id == job.id )
     images = images.filter( Image.category == "render" )
+    images = images.order_by( Frame.frame )
     images = images.all()
 
     with WandImage() as gif_preview:

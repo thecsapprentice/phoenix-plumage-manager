@@ -341,13 +341,6 @@ class PooledServerManager(object):
         except NoResultFound:
             pass
         else:
-            for frame in job.frames:
-                if frame.status < 2:
-                    frame.status = -1
-                else:
-                    self._db.delete(frame);
-            self._channel.queue_delete(queue='render_'+job.uuid)
-            self._db.delete(job.settings)
             self._db.delete(job)
             self._db.commit()
         
@@ -361,7 +354,7 @@ class PooledServerManager(object):
             if frame.status == -1:
                 ch.basic_ack(delivery_tag = method.delivery_tag);
                 self._db.delete(frame)
-            else:
+
                 ch.basic_reject(delivery_tag = method.delivery_tag, requeue=True);
         self._db.commit()
         if self._db.query(Frame).filter(Frame.status==-1).count() == 0:

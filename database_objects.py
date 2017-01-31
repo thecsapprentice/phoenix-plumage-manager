@@ -22,7 +22,7 @@ class ManagerSettings(Base):
 class Settings(Base):
     __tablename__ = 'settings'
     id = Column(Integer, primary_key=True)
-    job_id = Column(Integer, ForeignKey('renderjob.id'))
+    job_id = Column(Integer, ForeignKey('renderjob.id'), nullable=False)
     timeout = Column(Integer)
     retries = Column(Integer)
     priority = Column(Integer, default=0)
@@ -40,10 +40,10 @@ class RenderJob(Base):
     end = Column(DateTime)
     frame_start = Column(Integer)
     frame_end = Column(Integer)
-    frames = relationship("Frame", order_by="Frame.id", backref="job")
+    frames = relationship("Frame", order_by="Frame.id", backref="job", cascade="save-update, merge, delete, delete-orphan" )
     job_status = Column(Integer)
     eta = Column(DateTime)
-    settings = relationship("Settings", uselist=False, backref="job")
+    settings = relationship("Settings", uselist=False, backref="job", cascade="save-update, merge, delete, delete-orphan")
     type_id = Column("type", Integer, ForeignKey('scenetypes.id'), default=0)
     type = relationship("SceneTypes")
 
@@ -57,7 +57,7 @@ class SceneTypes(Base):
 class Frame(Base):
     __tablename__ = 'frame'
     id = Column(Integer, primary_key=True)
-    job_id = Column(Integer, ForeignKey('renderjob.id'))
+    job_id = Column(Integer, ForeignKey('renderjob.id'), nullable=False)
     frame = Column(Integer)
     status = Column(Integer)
     uuid = Column(String(34))
@@ -66,12 +66,12 @@ class Frame(Base):
     node = Column(String(256),default="")
     frame_metadata = Column(Text,default="{}")    
     fail_count = Column(Integer,default=0)
-    images = relationship("Image", order_by="Frame.id", backref="frame")
+    images = relationship("Image", order_by="Image.id", backref="frame", cascade="save-update, merge, delete, delete-orphan")
     
 class Image(Base):
     __tablename__ = 'image'
     id = Column(Integer, primary_key=True)
-    frame_id = Column(Integer, ForeignKey('frame.id'))
+    frame_id = Column(Integer, ForeignKey('frame.id'), nullable=False)
     path = Column(String(250), nullable=False)
     category = Column(String(250), nullable=True)
     timestamp = Column(DateTime)
